@@ -1,0 +1,55 @@
+name: new-api-cliproxyapi
+
+services:
+  cli-proxy-api:
+    image: eceasy/cli-proxy-api:latest
+    pull_policy: always
+    restart: unless-stopped
+    configs:
+      - source: cliproxyapi-config
+        target: /CLIProxyAPI/config.yaml
+    volumes:
+      - ./auths:/root/.cli-proxy-api
+    expose:
+      - "8317"
+
+  image-sidecar:
+    image: new-api-cliproxyapi-image-sidecar:latest
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      LISTEN_ADDR: ":8080"
+      CLIPROXYAPI_URL: http://cli-proxy-api:8317
+      IMAGE_HOST_ALLOWLIST: ${IMAGE_HOST_ALLOWLIST:-images.example.com}
+    expose:
+      - "8080"
+    depends_on:
+      - cli-proxy-api
+
+  new-api:
+    image: calciumion/new-api:latest
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      SESSION_SECRET: ${NEW_API_SESSION_SECRET:?请在 .env 设置 NEW_API_SESSION_SECRET}
+    volumes:
+      - ./data:/data
+    ports:
+      - "${NEW_API_PORT:-3000}:3000"
+    depends_on:
+      - image-sidecar
+
+configs:
+  cliproxyapi-config:
+    content: |
+      config-version: 8
+      server:
+        host: ""
+        port: 8317
+      access:
+        api-keys:
+          - "${CLIPROXYAPI_API_KEY:?请在 .env 设置 CLIPROXYAPI_API_KEY}"
+      management:
+        secret-key: ""
