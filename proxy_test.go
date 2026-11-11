@@ -471,6 +471,10 @@ func TestChatCompletionsStreamsBeforeUpstreamCompletes(t *testing.T) {
 }
 
 func TestChatCompletionsImageFailuresDoNotReachUpstream(t *testing.T) {
+	pngBytes, err := base64.StdEncoding.DecodeString(onePixelPNGBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name           string
 		upstreamStatus int
@@ -481,6 +485,7 @@ func TestChatCompletionsImageFailuresDoNotReachUpstream(t *testing.T) {
 	}{
 		{name: "下载状态失败", upstreamStatus: http.StatusInternalServerError, contentType: "image/png", body: "error", expectedStatus: http.StatusBadGateway, expectedCode: "image_download_failed"},
 		{name: "响应不是图片", upstreamStatus: http.StatusOK, contentType: "text/plain", body: "not an image", expectedStatus: http.StatusBadRequest, expectedCode: "unsupported_image_type"},
+		{name: "MIME 声明与内容不一致", upstreamStatus: http.StatusOK, contentType: "image/jpeg", body: string(pngBytes), expectedStatus: http.StatusBadRequest, expectedCode: "unsupported_image_type"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

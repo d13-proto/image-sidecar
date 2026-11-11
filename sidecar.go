@@ -295,6 +295,9 @@ func (h *sidecarHandler) fetchDataURL(parent context.Context, rawURL string, rem
 	sniffedMIME := http.DetectContentType(content)
 	mimeType := headerMIME
 	if supportedImageMIME(sniffedMIME) {
+		if headerMIME != "" && headerMIME != sniffedMIME {
+			return "", &requestError{http.StatusBadRequest, "unsupported_image_type", "图片类型不受支持或内容与声明不符"}
+		}
 		mimeType = sniffedMIME
 	} else if !supportedImageMIME(headerMIME) || sniffedMIME != "application/octet-stream" {
 		return "", &requestError{http.StatusBadRequest, "unsupported_image_type", "图片类型不受支持或内容与声明不符"}
