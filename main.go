@@ -43,7 +43,7 @@ func parseUpstream(rawURL string) (*url.URL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("CLIPROXYAPI_URL 无效: %w", err)
 	}
-	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil ||
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil ||
 		(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, fmt.Errorf("CLIPROXYAPI_URL 只能是不带路径、查询或用户信息的 HTTP/HTTPS 根地址")
 	}

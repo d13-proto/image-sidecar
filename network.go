@@ -21,6 +21,7 @@ var nonPublicPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("2001::/23"),
 	netip.MustParsePrefix("2001:db8::/32"),
 	netip.MustParsePrefix("3fff::/20"),
+	netip.MustParsePrefix("fec0::/10"),
 }
 
 func newSecureImageClient() *http.Client {

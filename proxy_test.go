@@ -18,6 +18,12 @@ import (
 
 const onePixelPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 
+func TestParseUpstreamRejectsEmptyHostname(t *testing.T) {
+	if _, err := parseUpstream("http://:8317"); err == nil {
+		t.Fatal("空主机名的 CLIPROXYAPI_URL 未被拒绝")
+	}
+}
+
 func TestChatCompletionsConvertsRemoteImage(t *testing.T) {
 	const expectedDataURL = "data:image/png;base64," + onePixelPNGBase64
 
@@ -99,6 +105,54 @@ func TestChatCompletionsConvertsRemoteImage(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsConvertsHEIFImages(t *testing.T) {
+	tests := []struct {
+		name    string
+		mime    string
+		content string
+	}{
+		{name: "HEIC", mime: "image/heic", content: "\x00\x00\x00\x10ftypheic\x00\x00\x00\x00"},
+		{name: "HEIF", mime: "image/heif", content: "\x00\x00\x00\x10ftypmif1\x00\x00\x00\x00"},
+		{name: "HEIC compatible brand", mime: "image/heic", content: "\x00\x00\x00\x14ftypxxxx\x00\x00\x00\x00heic"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", test.mime)
+				_, _ = w.Write([]byte(test.content))
+			}))
+			t.Cleanup(imageServer.Close)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("读取上游请求体失败: %v", err)
+					return
+				}
+				expected := `"url":"data:` + test.mime + `;base64,` + base64.StdEncoding.EncodeToString([]byte(test.content)) + `"`
+				if !strings.Contains(string(body), expected) {
+					t.Errorf("上游没有收到正确的 %s data URL: %s", test.mime, body)
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(upstream.Close)
+
+			sidecar := httptest.NewServer(newTestHandler(t, upstream.URL, imageServer, "images.example.com"))
+			t.Cleanup(sidecar.Close)
+			response, err := http.Post(sidecar.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{
+				"model":"gemini-3.1-flash-image",
+				"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"http://images.example.com/image"}}]}]
+			}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("状态码 = %d，期望 200", response.StatusCode)
+			}
+		})
+	}
+}
+
 func TestChatCompletionsRejectsHostOutsideAllowlist(t *testing.T) {
 	imageCalled := false
 	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -176,6 +230,26 @@ func TestChatCompletionsRejectsOversizedImage(t *testing.T) {
 	}
 	if upstreamCalled {
 		t.Fatal("超限图片仍被转发到上游")
+	}
+}
+
+func TestIsPublicIPRejectsNonPublicAddresses(t *testing.T) {
+	tests := []struct {
+		ip   string
+		want bool
+	}{
+		{ip: "fc00::1", want: false},
+		{ip: "fec0::1", want: false},
+		{ip: "2001:db8::1", want: false},
+		{ip: "3fff::1", want: false},
+		{ip: "2606:4700:4700::1111", want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.ip, func(t *testing.T) {
+			if got := isPublicIP(net.ParseIP(test.ip)); got != test.want {
+				t.Fatalf("isPublicIP(%s) = %v，期望 %v", test.ip, got, test.want)
+			}
+		})
 	}
 }
 
@@ -485,6 +559,7 @@ func TestChatCompletionsImageFailuresDoNotReachUpstream(t *testing.T) {
 	}{
 		{name: "下载状态失败", upstreamStatus: http.StatusInternalServerError, contentType: "image/png", body: "error", expectedStatus: http.StatusBadGateway, expectedCode: "image_download_failed"},
 		{name: "响应不是图片", upstreamStatus: http.StatusOK, contentType: "text/plain", body: "not an image", expectedStatus: http.StatusBadRequest, expectedCode: "unsupported_image_type"},
+		{name: "二进制内容伪装 PNG", upstreamStatus: http.StatusOK, contentType: "image/png", body: "\x00\x00\x00\x00", expectedStatus: http.StatusBadRequest, expectedCode: "unsupported_image_type"},
 		{name: "MIME 声明与内容不一致", upstreamStatus: http.StatusOK, contentType: "image/jpeg", body: string(pngBytes), expectedStatus: http.StatusBadRequest, expectedCode: "unsupported_image_type"},
 	}
 	for _, test := range tests {

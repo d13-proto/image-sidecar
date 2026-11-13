@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -293,16 +294,13 @@ func (h *sidecarHandler) fetchDataURL(parent context.Context, rawURL string, rem
 		headerMIME, _, _ = mime.ParseMediaType(value)
 	}
 	sniffedMIME := http.DetectContentType(content)
-	mimeType := headerMIME
-	if supportedImageMIME(sniffedMIME) {
-		if headerMIME != "" && headerMIME != sniffedMIME {
-			return "", &requestError{http.StatusBadRequest, "unsupported_image_type", "图片类型不受支持或内容与声明不符"}
-		}
-		mimeType = sniffedMIME
-	} else if !supportedImageMIME(headerMIME) || sniffedMIME != "application/octet-stream" {
+	if sniffedMIME == "application/octet-stream" {
+		sniffedMIME = sniffHEIFMIME(content)
+	}
+	if !supportedImageMIME(sniffedMIME) || (headerMIME != "" && headerMIME != sniffedMIME) {
 		return "", &requestError{http.StatusBadRequest, "unsupported_image_type", "图片类型不受支持或内容与声明不符"}
 	}
-	return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(content)), nil
+	return fmt.Sprintf("data:%s;base64,%s", sniffedMIME, base64.StdEncoding.EncodeToString(content)), nil
 }
 
 func isTimeoutError(err error) bool {
@@ -330,6 +328,28 @@ func supportedImageMIME(value string) bool {
 	default:
 		return false
 	}
+}
+
+func sniffHEIFMIME(content []byte) string {
+	if len(content) < 16 || string(content[4:8]) != "ftyp" {
+		return ""
+	}
+	boxSize := int(binary.BigEndian.Uint32(content[:4]))
+	if boxSize < 16 || boxSize > len(content) || boxSize%4 != 0 {
+		return ""
+	}
+	for offset := 8; offset < boxSize; offset += 4 {
+		if offset == 12 {
+			continue
+		}
+		switch string(content[offset : offset+4]) {
+		case "heic", "heix", "heim", "heis":
+			return "image/heic"
+		case "mif1":
+			return "image/heif"
+		}
+	}
+	return ""
 }
 
 func normalizeHost(host string) string {
