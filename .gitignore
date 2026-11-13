@@ -1,4 +1,5 @@
 .env
 /auths/
 /data/
+/flow2api/
 /image-sidecar

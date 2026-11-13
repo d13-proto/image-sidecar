@@ -13,6 +13,33 @@ services:
     expose:
       - "8317"
 
+  flow2api:
+    image: ghcr.io/thesmallhancat/flow2api:latest
+    pull_policy: always
+    restart: unless-stopped
+    configs:
+      - source: flow2api-config
+        target: /app/config/setting.toml
+    volumes:
+      - ./flow2api/data:/app/data
+      - ./flow2api/tmp:/app/tmp
+    environment:
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "127.0.0.1:${FLOW2API_PORT:-38000}:8000"
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
   image-sidecar:
     image: new-api-cliproxyapi-image-sidecar:latest
     build:
@@ -27,6 +54,21 @@ services:
     depends_on:
       - cli-proxy-api
 
+  image-sidecar-flow:
+    image: new-api-cliproxyapi-image-sidecar:latest
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      LISTEN_ADDR: ":8080"
+      CLIPROXYAPI_URL: http://flow2api:8000
+      IMAGE_HOST_ALLOWLIST: ${IMAGE_HOST_ALLOWLIST:-images.example.com}
+    expose:
+      - "8080"
+    depends_on:
+      flow2api:
+        condition: service_healthy
+
   new-api:
     image: calciumion/new-api:latest
     pull_policy: always
@@ -40,6 +82,7 @@ services:
       - "${NEW_API_PORT:-3000}:3000"
     depends_on:
       - image-sidecar
+      - image-sidecar-flow
 
 configs:
   cliproxyapi-config:
@@ -53,3 +96,19 @@ configs:
           - "${CLIPROXYAPI_API_KEY:?请在 .env 设置 CLIPROXYAPI_API_KEY}"
       management:
         secret-key: ""
+
+  flow2api-config:
+    content: |
+      [global]
+      api_key = "${FLOW2API_API_KEY:?请在 .env 设置 FLOW2API_API_KEY}"
+      admin_username = "admin"
+      admin_password = "${FLOW2API_ADMIN_PASSWORD:?请在 .env 设置 FLOW2API_ADMIN_PASSWORD}"
+
+      [flow]
+      labs_base_url = "https://flow.google.com"
+      api_base_url = "https://flow.google.com"
+      poll_interval = 3.0
+
+      [server]
+      host = "0.0.0.0"
+      port = 8000
